@@ -1,0 +1,62 @@
+/* ImageUploader.css */
+
+.container {
+    padding: 20px;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  
+  .header {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  
+  .upload-area {
+    border: 2px dashed #007BFF;
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    color: #007BFF;
+    margin-bottom: 20px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+  
+  .upload-area:hover {
+    background-color: #f0f8ff;
+  }
+  
+  .group-container {
+    margin-bottom: 20px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px;
+    background: #fafafa;
+  }
+  
+  .group-header {
+    font-weight: bold;
+    margin-bottom: 10px;
+  }
+  
+  .thumbnail {
+    position: relative;
+    margin: 5px;
+  }
+  
+  .thumbnail img {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: 4px;
+  }
+  
+  .progress-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 5px;
+    background: #28a745;
+    border-radius: 0 0 4px 4px;
+  }
+  

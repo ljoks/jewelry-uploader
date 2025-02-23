@@ -1,33 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useDropzone } from 'react-dropzone';
 import exifr from 'exifr';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import './ImageUploader.css';
 
 const ImageUploader = () => {
-  const [images, setImages] = useState([]);
+  const [files, setFiles] = useState([]);
+  // Each group is an array of image objects.
   const [groups, setGroups] = useState([]);
+  const [uploadProgress, setUploadProgress] = useState({});
 
-  // Handle file upload and extract EXIF metadata to get capture time
-  const handleFileChange = async (e) => {
-    const files = Array.from(e.target.files);
-    const imagesWithData = await Promise.all(files.map(async file => {
-      // Create a URL for previewing the image
+  // onDrop handler for react-dropzone
+  const onDrop = useCallback(async (acceptedFiles) => {
+    const processedFiles = await Promise.all(acceptedFiles.map(async (file) => {
       const url = URL.createObjectURL(file);
-      // Try to extract the original date/time from EXIF data
-      const exifData = await exifr.parse(file);
-      // Fallback to file lastModified if no EXIF data is found
-      const dateTime = exifData && (exifData.DateTimeOriginal || exifData.CreateDate)
-        ? new Date(exifData.DateTimeOriginal || exifData.CreateDate)
-        : new Date(file.lastModified);
-      return { file, url, dateTime };
+      let dateTime;
+      try {
+        const exifData = await exifr.parse(file);
+        dateTime = exifData && (exifData.DateTimeOriginal || exifData.CreateDate)
+          ? new Date(exifData.DateTimeOriginal || exifData.CreateDate)
+          : new Date(file.lastModified);
+      } catch (err) {
+        dateTime = new Date(file.lastModified);
+      }
+      return { file, url, dateTime, id: `${file.name}-${file.lastModified}-${Math.random()}` };
     }));
 
-    // Sort images by timestamp
-    imagesWithData.sort((a, b) => a.dateTime - b.dateTime);
+    // Update files state
+    setFiles(prev => [...prev, ...processedFiles]);
 
-    // Group images that were captured within 5 minutes (300000 ms) of each other
-    const threshold = 300000; // 5 minutes in milliseconds
+    // Auto-grouping based on timestamp
+    const allFiles = [...files, ...processedFiles].sort((a, b) => a.dateTime - b.dateTime);
+    const threshold = 300000; // 5 minutes
+    const newGroups = [];
     let currentGroup = [];
-    const groupsResult = [];
-    imagesWithData.forEach(img => {
+    allFiles.forEach((img) => {
       if (currentGroup.length === 0) {
         currentGroup.push(img);
       } else {
@@ -35,36 +42,73 @@ const ImageUploader = () => {
         if (img.dateTime - lastImg.dateTime <= threshold) {
           currentGroup.push(img);
         } else {
-          groupsResult.push(currentGroup);
+          newGroups.push(currentGroup);
           currentGroup = [img];
         }
       }
     });
     if (currentGroup.length > 0) {
-      groupsResult.push(currentGroup);
+      newGroups.push(currentGroup);
     }
+    setGroups(newGroups);
+  }, [files]);
 
-    setImages(imagesWithData);
-    setGroups(groupsResult);
-  };
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: 'image/*',
+    multiple: true
+  });
 
-  // Allow user to move an image from one group to another
-  const handleGroupChange = (sourceGroupIndex, targetGroupIndex, imgIndex) => {
-    const updatedGroups = groups.map((group, idx) => [...group]);
-    const [movedImage] = updatedGroups[sourceGroupIndex].splice(imgIndex, 1);
-    // If targetGroupIndex equals the current number of groups, create a new group
-    if (targetGroupIndex === updatedGroups.length) {
-      updatedGroups.push([movedImage]);
-    } else {
-      updatedGroups[targetGroupIndex].push(movedImage);
-    }
-    setGroups(updatedGroups);
-  };
+  // onDragEnd handles moving images between groups.
+  const onDragEnd = (result) => {
+    const { source, destination } = result;
+    // If dropped outside a droppable area, do nothing.
+    if (!destination) return;
 
-  const handleConfirm = async () => {
-    // Prepare data: groups is an array of arrays of images (or at least the necessary details)
-    const payload = { groups };
+    // Create a deep copy of groups for manipulation.
+    const updatedGroups = groups.map(group => Array.from(group));
     
+    // Remove the item from its source group.
+    const [movedItem] = updatedGroups[source.droppableId].splice(source.index, 1);
+
+    // Insert the item into the destination group.
+    updatedGroups[destination.droppableId].splice(destination.index, 0, movedItem);
+
+    // Remove any group that has become empty.
+    const cleanedGroups = updatedGroups.filter(group => group.length > 0);
+
+    setGroups(cleanedGroups);
+  };
+
+  // Dummy upload simulation to illustrate progress indicator.
+  const simulateUpload = (fileId) => {
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += 10;
+      setUploadProgress(prev => ({ ...prev, [fileId]: progress }));
+      if (progress >= 100) {
+        clearInterval(interval);
+      }
+    }, 100);
+  };
+
+  // Simulate upload for each new file.
+  files.forEach(fileObj => {
+    if (!uploadProgress[fileObj.id]) {
+      simulateUpload(fileObj.id);
+    }
+  });
+
+  // Handler for adding a new empty group.
+  const addNewGroup = () => {
+    setGroups(prev => [...prev, []]);
+  };
+
+  // Handler for confirming groupings and sending to n8n (placeholder).
+  const handleConfirm = async () => {
+    // Prepare payload for n8n: convert groups into a simple JSON format.
+    const payload = { groups: groups.map(group => group.map(img => ({ url: img.url, dateTime: img.dateTime }))) };
+
     try {
       const response = await fetch('http://localhost:5678/webhook-test/confirm-groupings', {
         method: 'POST',
@@ -75,93 +119,75 @@ const ImageUploader = () => {
       if (response.ok) {
         alert('Groupings confirmed and sent for processing!');
       } else {
-        alert('There was an error submitting your groupings.');
+        alert('Error submitting your groupings.');
       }
     } catch (error) {
       console.error('Error:', error);
       alert('Network error occurred.');
     }
   };
-  
 
   return (
-    <div style={{ padding: '20px' }}>
-      <h2>Bulk Upload Jewelry Images</h2>
-      <input type="file" accept="image/*" multiple onChange={handleFileChange} />
+    <div className="container">
+      <div className="header">
+        <h2>Jewelry Bulk Upload</h2>
+      </div>
+      <div {...getRootProps({ className: 'upload-area' })}>
+        <input {...getInputProps()} />
+        {isDragActive ? (
+          <p>Drop the images here ...</p>
+        ) : (
+          <p>Drag & drop images here, or click to select files</p>
+        )}
+      </div>
 
       {groups.length > 0 && (
         <>
-          <h3>Suggested Groupings (Based on Timestamps)</h3>
-          {groups.map((group, gIndex) => (
-            <div
-              key={gIndex}
-              style={{
-                border: '1px solid #ccc',
-                margin: '10px 0',
-                padding: '10px',
-                borderRadius: '4px'
-              }}
-            >
-              <h4>Group {gIndex + 1}</h4>
-              <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-                {group.map((img, iIndex) => (
+          <h3>Image Groups (Based on Timestamps)</h3>
+          <DragDropContext onDragEnd={onDragEnd}>
+            {groups.map((group, groupIndex) => (
+              <Droppable droppableId={`${groupIndex}`} key={groupIndex}>
+                {(provided) => (
                   <div
-                    key={iIndex}
-                    style={{
-                      margin: '5px',
-                      textAlign: 'center',
-                      width: '120px'
-                    }}
+                    className="group-container"
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
                   >
-                    <img
-                      src={img.url}
-                      alt={`Uploaded ${iIndex}`}
-                      style={{
-                        width: '100px',
-                        height: '100px',
-                        objectFit: 'cover',
-                        borderRadius: '4px'
-                      }}
-                    />
-                    <p style={{ fontSize: '0.75rem' }}>
-                      {img.dateTime.toLocaleTimeString()}
-                    </p>
-                    <div>
-                      <label htmlFor={`group-select-${gIndex}-${iIndex}`}>
-                        Move to:
-                      </label>
-                      <select
-                        id={`group-select-${gIndex}-${iIndex}`}
-                        onChange={(e) =>
-                          handleGroupChange(
-                            gIndex,
-                            parseInt(e.target.value),
-                            iIndex
-                          )
-                        }
-                        defaultValue={gIndex}
-                      >
-                        {groups.map((_, idx) => (
-                          <option key={idx} value={idx}>
-                            Group {idx + 1}
-                          </option>
-                        ))}
-                        <option value={groups.length}>New Group</option>
-                      </select>
+                    <div className="group-header">Group {groupIndex + 1}</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+                      {group.map((img, index) => (
+                        <Draggable key={img.id} draggableId={img.id} index={index}>
+                          {(provided) => (
+                            <div
+                              className="thumbnail"
+                              ref={provided.innerRef}
+                              {...provided.draggableProps}
+                              {...provided.dragHandleProps}
+                            >
+                              <img src={img.url} alt={`Uploaded ${index}`} />
+                              {uploadProgress[img.id] && (
+                                <div
+                                  className="progress-bar"
+                                  style={{ width: `${uploadProgress[img.id]}%` }}
+                                />
+                              )}
+                            </div>
+                          )}
+                        </Draggable>
+                      ))}
+                      {provided.placeholder}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          ))}
+                )}
+              </Droppable>
+            ))}
+          </DragDropContext>
+          <button onClick={addNewGroup}>Add New Group</button>
+          <button onClick={handleConfirm} style={{ marginLeft: '10px' }}>Confirm Groupings</button>
         </>
       )}
-
-      <button onClick={handleConfirm}>Confirm Groupings</button>
-
     </div>
   );
 };
 
 export default ImageUploader;
-
