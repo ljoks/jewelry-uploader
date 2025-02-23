@@ -2,7 +2,46 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import exifr from 'exifr';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import './ImageUploader.css';
+import {
+  AppBar,
+  Toolbar,
+  Typography,
+  Container,
+  Paper,
+  Button,
+  Card,
+  CardMedia,
+  CardContent,
+  LinearProgress,
+  Box,
+  Grid
+} from '@mui/material';
+import { styled } from '@mui/system';
+
+// Styled components for dropzone area and group container
+const DropzoneArea = styled(Paper)(({ theme }) => ({
+  padding: theme.spacing(4),
+  textAlign: 'center',
+  color: theme.palette.primary.main,
+  border: `2px dashed ${theme.palette.primary.main}`,
+  backgroundColor: theme.palette.background.paper,
+  cursor: 'pointer',
+  transition: 'background-color 0.2s ease',
+  '&:hover': {
+    backgroundColor: theme.palette.action.hover,
+  },
+}));
+
+const GroupContainer = styled(Paper)(({ theme }) => ({
+  padding: theme.spacing(2),
+  marginBottom: theme.spacing(2),
+  backgroundColor: theme.palette.grey[50],
+}));
+
+const ThumbnailCard = styled(Card)(({ theme }) => ({
+  width: 120,
+  margin: theme.spacing(1),
+}));
 
 const ImageUploader = () => {
   const [files, setFiles] = useState([]);
@@ -12,19 +51,21 @@ const ImageUploader = () => {
 
   // onDrop handler for react-dropzone
   const onDrop = useCallback(async (acceptedFiles) => {
-    const processedFiles = await Promise.all(acceptedFiles.map(async (file) => {
-      const url = URL.createObjectURL(file);
-      let dateTime;
-      try {
-        const exifData = await exifr.parse(file);
-        dateTime = exifData && (exifData.DateTimeOriginal || exifData.CreateDate)
-          ? new Date(exifData.DateTimeOriginal || exifData.CreateDate)
-          : new Date(file.lastModified);
-      } catch (err) {
-        dateTime = new Date(file.lastModified);
-      }
-      return { file, url, dateTime, id: `${file.name}-${file.lastModified}-${Math.random()}` };
-    }));
+    const processedFiles = await Promise.all(
+      acceptedFiles.map(async (file) => {
+        const url = URL.createObjectURL(file);
+        let dateTime;
+        try {
+          const exifData = await exifr.parse(file);
+          dateTime = exifData && (exifData.DateTimeOriginal || exifData.CreateDate)
+            ? new Date(exifData.DateTimeOriginal || exifData.CreateDate)
+            : new Date(file.lastModified);
+        } catch (err) {
+          dateTime = new Date(file.lastModified);
+        }
+        return { file, url, dateTime, id: `${file.name}-${file.lastModified}-${Math.random()}` };
+      })
+    );
 
     // Update files state
     setFiles(prev => [...prev, ...processedFiles]);
@@ -59,28 +100,18 @@ const ImageUploader = () => {
     multiple: true
   });
 
-  // onDragEnd handles moving images between groups.
+  // onDragEnd: Move images between groups.
   const onDragEnd = (result) => {
     const { source, destination } = result;
-    // If dropped outside a droppable area, do nothing.
     if (!destination) return;
-
-    // Create a deep copy of groups for manipulation.
     const updatedGroups = groups.map(group => Array.from(group));
-    
-    // Remove the item from its source group.
     const [movedItem] = updatedGroups[source.droppableId].splice(source.index, 1);
-
-    // Insert the item into the destination group.
     updatedGroups[destination.droppableId].splice(destination.index, 0, movedItem);
-
-    // Remove any group that has become empty.
     const cleanedGroups = updatedGroups.filter(group => group.length > 0);
-
     setGroups(cleanedGroups);
   };
 
-  // Dummy upload simulation to illustrate progress indicator.
+  // Dummy upload simulation function for progress indicator.
   const simulateUpload = (fileId) => {
     let progress = 0;
     const interval = setInterval(() => {
@@ -104,18 +135,15 @@ const ImageUploader = () => {
     setGroups(prev => [...prev, []]);
   };
 
-  // Handler for confirming groupings and sending to n8n (placeholder).
+  // Handler for confirming groupings and sending to n8n.
   const handleConfirm = async () => {
-    // Prepare payload for n8n: convert groups into a simple JSON format.
     const payload = { groups: groups.map(group => group.map(img => ({ url: img.url, dateTime: img.dateTime }))) };
-
     try {
       const response = await fetch('http://localhost:5678/webhook-test/confirm-groupings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      
       if (response.ok) {
         alert('Groupings confirmed and sent for processing!');
       } else {
@@ -128,65 +156,91 @@ const ImageUploader = () => {
   };
 
   return (
-    <div className="container">
-      <div className="header">
-        <h2>Jewelry Bulk Upload</h2>
-      </div>
-      <div {...getRootProps({ className: 'upload-area' })}>
-        <input {...getInputProps()} />
-        {isDragActive ? (
-          <p>Drop the images here ...</p>
-        ) : (
-          <p>Drag & drop images here, or click to select files</p>
-        )}
-      </div>
+    <>
+      <AppBar position="static">
+        <Toolbar>
+          <Typography variant="h6" component="div">
+            Jewelry Bulk Upload
+          </Typography>
+        </Toolbar>
+      </AppBar>
+      <Container maxWidth="md" sx={{ mt: 4 }}>
+        <DropzoneArea {...getRootProps()}>
+          <input {...getInputProps()} />
+          {isDragActive ? (
+            <Typography variant="body1">Drop the images here...</Typography>
+          ) : (
+            <Typography variant="body1">
+              Drag & drop images here, or click to select files
+            </Typography>
+          )}
+        </DropzoneArea>
 
-      {groups.length > 0 && (
-        <>
-          <h3>Image Groups (Based on Timestamps)</h3>
-          <DragDropContext onDragEnd={onDragEnd}>
-            {groups.map((group, groupIndex) => (
-              <Droppable droppableId={`${groupIndex}`} key={groupIndex}>
-                {(provided) => (
-                  <div
-                    className="group-container"
-                    ref={provided.innerRef}
-                    {...provided.droppableProps}
-                  >
-                    <div className="group-header">Group {groupIndex + 1}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-                      {group.map((img, index) => (
-                        <Draggable key={img.id} draggableId={img.id} index={index}>
-                          {(provided) => (
-                            <div
-                              className="thumbnail"
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                            >
-                              <img src={img.url} alt={`Uploaded ${index}`} />
-                              {uploadProgress[img.id] && (
-                                <div
-                                  className="progress-bar"
-                                  style={{ width: `${uploadProgress[img.id]}%` }}
-                                />
-                              )}
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {provided.placeholder}
-                    </div>
-                  </div>
-                )}
-              </Droppable>
-            ))}
-          </DragDropContext>
-          <button onClick={addNewGroup}>Add New Group</button>
-          <button onClick={handleConfirm} style={{ marginLeft: '10px' }}>Confirm Groupings</button>
-        </>
-      )}
-    </div>
+        {groups.length > 0 && (
+          <>
+            <Typography variant="h5" sx={{ mt: 4, mb: 2 }}>
+              Image Groups (Based on Timestamps)
+            </Typography>
+            <DragDropContext onDragEnd={onDragEnd}>
+              <Grid container spacing={2}>
+                {groups.map((group, groupIndex) => (
+                  <Grid item xs={12} md={6} key={groupIndex}>
+                    <Droppable droppableId={`${groupIndex}`}>
+                      {(provided) => (
+                        <GroupContainer
+                          ref={provided.innerRef}
+                          {...provided.droppableProps}
+                        >
+                          <Typography variant="subtitle1" sx={{ mb: 1 }}>
+                            Group {groupIndex + 1}
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
+                            {group.map((img, index) => (
+                              <Draggable key={img.id} draggableId={img.id} index={index}>
+                                {(provided) => (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                  >
+                                    <ThumbnailCard>
+                                      <CardMedia
+                                        component="img"
+                                        height="100"
+                                        image={img.url}
+                                        alt={`Image ${index}`}
+                                      />
+                                      <CardContent sx={{ p: 1 }}>
+                                        {uploadProgress[img.id] !== undefined && (
+                                          <LinearProgress variant="determinate" value={uploadProgress[img.id]} />
+                                        )}
+                                      </CardContent>
+                                    </ThumbnailCard>
+                                  </div>
+                                )}
+                              </Draggable>
+                            ))}
+                            {provided.placeholder}
+                          </Box>
+                        </GroupContainer>
+                      )}
+                    </Droppable>
+                  </Grid>
+                ))}
+              </Grid>
+            </DragDropContext>
+            <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+              <Button variant="outlined" onClick={addNewGroup}>
+                Add New Group
+              </Button>
+              <Button variant="contained" onClick={handleConfirm}>
+                Confirm Groupings
+              </Button>
+            </Box>
+          </>
+        )}
+      </Container>
+    </>
   );
 };
 
