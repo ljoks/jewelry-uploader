@@ -61,6 +61,29 @@ const ImageUploader = () => {
     setGroups(updatedGroups);
   };
 
+  const handleConfirm = async () => {
+    // Prepare data: groups is an array of arrays of images (or at least the necessary details)
+    const payload = { groups };
+    
+    try {
+      const response = await fetch('http://localhost:5678/webhook-test/confirm-groupings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      
+      if (response.ok) {
+        alert('Groupings confirmed and sent for processing!');
+      } else {
+        alert('There was an error submitting your groupings.');
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Network error occurred.');
+    }
+  };
+  
+
   return (
     <div style={{ padding: '20px' }}>
       <h2>Bulk Upload Jewelry Images</h2>
@@ -133,6 +156,9 @@ const ImageUploader = () => {
           ))}
         </>
       )}
+
+      <button onClick={handleConfirm}>Confirm Groupings</button>
+
     </div>
   );
 };
