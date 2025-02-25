@@ -36,7 +36,7 @@ const DropzoneArea = styled(Paper)(({ theme }) => ({
 const GroupContainer = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(2),
   marginBottom: theme.spacing(2),
-  backgroundColor: theme.palette.grey[50],
+  backgroundColor: theme.palette.background.paper,
 }));
 
 const ThumbnailCard = styled(Card)(({ theme }) => ({
@@ -327,10 +327,10 @@ const ImageUploader = () => {
               </Grid>
             </DragDropContext>
             <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-              <Button variant="outlined" onClick={addNewGroup}>
+              <Button variant="text" onClick={addNewGroup}>
                 Add New Group
               </Button>
-              <Button variant="contained" onClick={handleConfirm}>
+              <Button variant="outlined" onClick={handleConfirm}>
                 Confirm Groupings
               </Button>
               {loadingListings && <CircularProgress size={24} sx={{ ml: 2 }} />}
