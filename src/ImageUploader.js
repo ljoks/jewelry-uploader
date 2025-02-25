@@ -16,7 +16,9 @@ import {
   Box,
   Grid,
   CircularProgress,
+  IconButton,
 } from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { styled } from '@mui/system';
 
 // Styled components for dropzone area and group container
@@ -42,6 +44,7 @@ const GroupContainer = styled(Paper)(({ theme }) => ({
 const ThumbnailCard = styled(Card)(({ theme }) => ({
   width: 120,
   margin: theme.spacing(1),
+  position: 'relative',
 }));
 
 // Utility: Convert a File object to a Base64 string.
@@ -49,7 +52,7 @@ const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result.split(',')[1]); // return only the base64 string without "data:image/..."
+    reader.onload = () => resolve(reader.result.split(',')[1]);
     reader.onerror = (error) => reject(error);
   });
 
@@ -64,8 +67,9 @@ const ImageUploader = () => {
   const [listings, setListings] = useState([]);
   const [loadingListings, setLoadingListings] = useState(false);
 
-  // onDrop handler for react-dropzone
+  // onDrop handler with file type filtering: only allow JPEG and PNG.
   const onDrop = useCallback(async (acceptedFiles) => {
+    // acceptedFiles will only include files matching our "accept" criteria.
     const processedFiles = await Promise.all(
       acceptedFiles.map(async (file) => {
         const url = URL.createObjectURL(file);
@@ -111,7 +115,7 @@ const ImageUploader = () => {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: 'image/*',
+    accept: 'image/jpeg, image/png',
     multiple: true,
   });
 
@@ -122,6 +126,16 @@ const ImageUploader = () => {
     const updatedGroups = groups.map((group) => Array.from(group));
     const [movedItem] = updatedGroups[source.droppableId].splice(source.index, 1);
     updatedGroups[destination.droppableId].splice(destination.index, 0, movedItem);
+    // Remove empty groups.
+    const cleanedGroups = updatedGroups.filter((group) => group.length > 0);
+    setGroups(cleanedGroups);
+  };
+
+  // Handler for deleting an image from a group.
+  const handleDeleteImage = (groupIndex, imgIndex) => {
+    const updatedGroups = groups.map((group) => Array.from(group));
+    updatedGroups[groupIndex].splice(imgIndex, 1);
+    // Remove group if it's empty.
     const cleanedGroups = updatedGroups.filter((group) => group.length > 0);
     setGroups(cleanedGroups);
   };
@@ -189,11 +203,11 @@ const ImageUploader = () => {
       max_tokens: 300,
     };
 
-    // Call the OpenAI API.
+    // Call the OpenAI API (via your serverless function in production)
     const response = await fetch('/api/generateDescription', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data), // data contains model, messages, max_tokens, etc.
+      body: JSON.stringify(data),
     });
 
     if (!response.ok) {
@@ -275,7 +289,7 @@ const ImageUploader = () => {
             <Typography variant="body1">Drop the images here...</Typography>
           ) : (
             <Typography variant="body1">
-              Drag & drop images here, or click to select files
+              Drag & drop images here, or click to select JPEG or PNG files
             </Typography>
           )}
         </DropzoneArea>
@@ -299,7 +313,12 @@ const ImageUploader = () => {
                             {group.map((img, index) => (
                               <Draggable key={img.id} draggableId={img.id} index={index}>
                                 {(provided) => (
-                                  <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}>
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                    style={{ position: 'relative', ...provided.draggableProps.style }}
+                                  >
                                     <ThumbnailCard>
                                       <CardMedia
                                         component="img"
@@ -312,6 +331,13 @@ const ImageUploader = () => {
                                           <LinearProgress variant="determinate" value={uploadProgress[img.id]} />
                                         )}
                                       </CardContent>
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => handleDeleteImage(groupIndex, index)}
+                                        sx={{ position: 'absolute', top: 0, right: 0 }}
+                                      >
+                                        <DeleteIcon fontSize="small" />
+                                      </IconButton>
                                     </ThumbnailCard>
                                   </div>
                                 )}
