@@ -1,8 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import exifr from 'exifr';
-import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import {
+import { 
   AppBar,
   Toolbar,
   Typography,
@@ -20,8 +19,9 @@ import {
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { styled } from '@mui/system';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
-// Styled components for dropzone area and group container
+// Styled components for dropzone area and image thumbnail card.
 const DropzoneArea = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(4),
   textAlign: 'center',
@@ -35,12 +35,6 @@ const DropzoneArea = styled(Paper)(({ theme }) => ({
   },
 }));
 
-const GroupContainer = styled(Paper)(({ theme }) => ({
-  padding: theme.spacing(2),
-  marginBottom: theme.spacing(2),
-  backgroundColor: theme.palette.background.paper,
-}));
-
 const ThumbnailCard = styled(Card)(({ theme }) => ({
   width: 120,
   margin: theme.spacing(1),
@@ -52,24 +46,22 @@ const fileToBase64 = (file) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onload = () => resolve(reader.result.split(',')[1]); // strip out "data:image/..."
     reader.onerror = (error) => reject(error);
   });
 
 const ImageUploader = () => {
   // "page" can be "upload" or "listings"
   const [page, setPage] = useState('upload');
-  const [files, setFiles] = useState([]);
-  // groups: an array of arrays of image objects. Each object contains: file, url, dateTime, id.
-  const [groups, setGroups] = useState([]);
+  const [files, setFiles] = useState([]); // List of uploaded image objects.
   const [uploadProgress, setUploadProgress] = useState({});
-  // listings: array of objects { description, images, groupIndex } for fake auction listings.
+  // listings: array of objects { description, imageIndices } returned from GPT-4 vision.
   const [listings, setListings] = useState([]);
   const [loadingListings, setLoadingListings] = useState(false);
 
-  // onDrop handler with file type filtering: only allow JPEG and PNG.
+  // onDrop handler for react-dropzone.
+  // Accept only JPEG and PNG files.
   const onDrop = useCallback(async (acceptedFiles) => {
-    // acceptedFiles will only include files matching our "accept" criteria.
     const processedFiles = await Promise.all(
       acceptedFiles.map(async (file) => {
         const url = URL.createObjectURL(file);
@@ -86,32 +78,8 @@ const ImageUploader = () => {
       })
     );
 
-    // Update files state
     setFiles((prev) => [...prev, ...processedFiles]);
-
-    // Auto-grouping based on timestamp
-    const allFiles = [...files, ...processedFiles].sort((a, b) => a.dateTime - b.dateTime);
-    const threshold = 300000; // 5 minutes
-    const newGroups = [];
-    let currentGroup = [];
-    allFiles.forEach((img) => {
-      if (currentGroup.length === 0) {
-        currentGroup.push(img);
-      } else {
-        const lastImg = currentGroup[currentGroup.length - 1];
-        if (img.dateTime - lastImg.dateTime <= threshold) {
-          currentGroup.push(img);
-        } else {
-          newGroups.push(currentGroup);
-          currentGroup = [img];
-        }
-      }
-    });
-    if (currentGroup.length > 0) {
-      newGroups.push(currentGroup);
-    }
-    setGroups(newGroups);
-  }, [files]);
+  }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -119,25 +87,21 @@ const ImageUploader = () => {
     multiple: true,
   });
 
-  // onDragEnd: Allow moving images between groups.
+  // Allow drag & drop reordering of images.
   const onDragEnd = (result) => {
     const { source, destination } = result;
     if (!destination) return;
-    const updatedGroups = groups.map((group) => Array.from(group));
-    const [movedItem] = updatedGroups[source.droppableId].splice(source.index, 1);
-    updatedGroups[destination.droppableId].splice(destination.index, 0, movedItem);
-    // Remove empty groups.
-    const cleanedGroups = updatedGroups.filter((group) => group.length > 0);
-    setGroups(cleanedGroups);
+    const updatedFiles = Array.from(files);
+    const [removed] = updatedFiles.splice(source.index, 1);
+    updatedFiles.splice(destination.index, 0, removed);
+    setFiles(updatedFiles);
   };
 
-  // Handler for deleting an image from a group.
-  const handleDeleteImage = (groupIndex, imgIndex) => {
-    const updatedGroups = groups.map((group) => Array.from(group));
-    updatedGroups[groupIndex].splice(imgIndex, 1);
-    // Remove group if it's empty.
-    const cleanedGroups = updatedGroups.filter((group) => group.length > 0);
-    setGroups(cleanedGroups);
+  // Delete an image from the list.
+  const handleDeleteImage = (index) => {
+    const updatedFiles = Array.from(files);
+    updatedFiles.splice(index, 1);
+    setFiles(updatedFiles);
   };
 
   // Dummy upload simulation for progress indicator.
@@ -145,101 +109,82 @@ const ImageUploader = () => {
     let progress = 0;
     const interval = setInterval(() => {
       progress += 10;
-      setUploadProgress((prev) => ({ ...prev, [fileId]: progress }));
-      if (progress >= 100) {
-        clearInterval(interval);
-      }
+      setUploadProgress(prev => ({ ...prev, [fileId]: progress }));
+      if (progress >= 100) clearInterval(interval);
     }, 100);
   };
 
   // Simulate upload for each new file.
-  files.forEach((fileObj) => {
+  files.forEach(fileObj => {
     if (!uploadProgress[fileObj.id]) {
       simulateUpload(fileObj.id);
     }
   });
 
-  // Handler for adding a new empty group.
-  const addNewGroup = () => {
-    setGroups((prev) => [...prev, []]);
-  };
-
-  // Function to generate a description for a single group using GPT-4o.
-  const generateDescriptionForGroup = async (group) => {
-    // Convert each file to Base64
-    const base64Images = await Promise.all(
-      group.map(async (img) => {
-        const base64 = await fileToBase64(img.file);
-        return `data:image/jpeg;base64,${base64}`;
-      })
-    );
-
-    // Build the messages array.
-    const messages = [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: `You are a jewelry seller creating a posting for the liveauctioneers website 
-            to sell this piece of jewelry. Create a concise description of this jewelry based on the following images.
-            Do not use markdown, just plain text.`,
-          },
-          ...base64Images.map((b64) => ({
-            type: 'image_url',
-            image_url: {
-              url: b64,
-              detail: 'low',
-            },
-          })),
-        ],
-      },
-    ];
-
-    // Build the API payload.
-    const data = {
-      model: 'gpt-4o-mini',
-      messages: messages,
-      max_tokens: 300,
-    };
-
-    // Call the OpenAI API (via your serverless function in production)
-    const response = await fetch('/api/generateDescription', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OpenAI API error: ${errorText}`);
-    }
-
-    const responseJson = await response.json();
-    const detailedDescription = responseJson.choices[0].message.content;
-    return detailedDescription + ` All photos represent the lot condition and may contain unseen 
-    imperfections in addition to the information provided. All items are described to the best of our abilities. 
-    Please communicate all questions and concerns prior to bidding. Please read our terms and conditions for more 
-    details. Good luck bidding.`;
-  };
-
-  // Handler for confirming groupings. For each group, get AI-generated description.
+  // Handler for confirming groupings.
+  // Uses GPT-4 vision to automatically group images and generate descriptions.
   const handleConfirm = async () => {
+    if (files.length === 0) {
+      alert("No images uploaded!");
+      return;
+    }
     setLoadingListings(true);
     try {
-      // For each group, call the API.
-      const listingsData = await Promise.all(
-        groups.map(async (group, index) => {
-          const description = await generateDescriptionForGroup(group);
-          return { groupIndex: index, description, images: group };
+      // Convert each file to Base64.
+      const base64Images = await Promise.all(
+        files.map(async (img) => {
+          const base64 = await fileToBase64(img.file);
+          return `data:image/jpeg;base64,${base64}`;
         })
       );
-      setListings(listingsData);
-      // Move to the fake auction listing page.
-      setPage('listings');
+
+      // Build the messages array with a prompt.
+      const messages = [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "You are an expert jewelry marketer. Given the following images of various jewelry pieces taken from multiple angles, please automatically group them by individual item and generate a detailed, marketing-friendly description for each item. Return your result in JSON format as an array of objects, where each object has a 'description' field and an 'imageIndices' field (0-indexed, referring to the order of the images provided)."
+            },
+            ...base64Images.map(b64 => ({
+              type: "image_url",
+              image_url: {
+                url: b64,
+                detail: "low"
+              }
+            }))
+          ]
+        }
+      ];
+
+      // Build the API payload.
+      const payload = {
+        model: "gpt-4o-mini", // adjust as needed
+        messages,
+        max_tokens: 500,
+      };
+
+      // Call the serverless function (or proxy) endpoint.
+      const response = await fetch('/api/generateGroupingAndDescriptions', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error: ${errorText}`);
+      }
+
+      const result = await response.json();
+      // Expected result format: an array of objects like:
+      // [ { description: "Detailed description...", imageIndices: [0, 2, 4] }, ... ]
+      setListings(result);
+      setPage("listings");
     } catch (error) {
-      console.error('Error generating descriptions:', error);
-      alert('There was an error generating the descriptions. Please try again.');
+      console.error("Error generating groups and descriptions:", error);
+      alert("Error generating groups and descriptions. Please try again.");
     } finally {
       setLoadingListings(false);
     }
@@ -251,33 +196,33 @@ const ImageUploader = () => {
       <Typography variant="h4" sx={{ mb: 3 }}>
         Fake Auction Listings
       </Typography>
-      {listings.map((listing) => (
-        <Paper key={listing.groupIndex} sx={{ p: 2, mb: 2 }}>
-          <Typography variant="h6">Jewelry Item {listing.groupIndex + 1}</Typography>
-          <Grid container spacing={2}>
-            {listing.images.map((img) => (
-              <Grid item xs={4} key={img.id}>
-                <img src={img.url} alt="Thumbnail" style={{ width: '100%', borderRadius: '4px' }} />
-              </Grid>
-            ))}
-          </Grid>
+      {listings.map((listing, idx) => (
+        <Paper key={idx} sx={{ p: 2, mb: 2 }}>
+          <Typography variant="h6">Jewelry Item {idx + 1}</Typography>
           <Typography variant="body1" sx={{ my: 1 }}>
             {listing.description}
           </Typography>
+          <Grid container spacing={2}>
+            {listing.imageIndices.map(imageIndex => (
+              <Grid item xs={4} key={imageIndex}>
+                <img src={files[imageIndex].url} alt={`Item ${idx} - Image ${imageIndex}`} style={{ width: '100%', borderRadius: '4px' }} />
+              </Grid>
+            ))}
+          </Grid>
         </Paper>
       ))}
-      <Button variant="contained" onClick={() => setPage('upload')} sx={{ mt: 2 }}>
+      <Button variant="contained" onClick={() => setPage("upload")} sx={{ mt: 2 }}>
         Back to Upload
       </Button>
     </Container>
   );
 
-  // Render the upload & grouping page.
+  // Render the upload page.
   const renderUpload = () => (
     <>
       <AppBar position="static">
         <Toolbar>
-          <Typography variant="h6" component="div">
+          <Typography variant="h6">
             Jewelry Bulk Upload
           </Typography>
         </Toolbar>
@@ -293,70 +238,55 @@ const ImageUploader = () => {
             </Typography>
           )}
         </DropzoneArea>
-
-        {groups.length > 0 && (
+        {files.length > 0 && (
           <>
             <Typography variant="h5" sx={{ mt: 4, mb: 2 }}>
-              Image Groups (Based on Timestamps)
+              Uploaded Images
             </Typography>
             <DragDropContext onDragEnd={onDragEnd}>
-              <Grid container spacing={2}>
-                {groups.map((group, groupIndex) => (
-                  <Grid item xs={12} md={6} key={groupIndex}>
-                    <Droppable droppableId={`${groupIndex}`}>
-                      {(provided) => (
-                        <GroupContainer ref={provided.innerRef} {...provided.droppableProps}>
-                          <Typography variant="subtitle1" sx={{ mb: 1 }}>
-                            Group {groupIndex + 1}
-                          </Typography>
-                          <Box sx={{ display: 'flex', flexWrap: 'wrap' }}>
-                            {group.map((img, index) => (
-                              <Draggable key={img.id} draggableId={img.id} index={index}>
-                                {(provided) => (
-                                  <div
-                                    ref={provided.innerRef}
-                                    {...provided.draggableProps}
-                                    {...provided.dragHandleProps}
-                                    style={{ position: 'relative', ...provided.draggableProps.style }}
-                                  >
-                                    <ThumbnailCard>
-                                      <CardMedia
-                                        component="img"
-                                        height="100"
-                                        image={img.url}
-                                        alt={`Image ${index}`}
-                                      />
-                                      <CardContent sx={{ p: 1 }}>
-                                        {uploadProgress[img.id] !== undefined && (
-                                          <LinearProgress variant="determinate" value={uploadProgress[img.id]} />
-                                        )}
-                                      </CardContent>
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => handleDeleteImage(groupIndex, index)}
-                                        sx={{ position: 'absolute', top: 0, right: 0 }}
-                                      >
-                                        <DeleteIcon fontSize="small" />
-                                      </IconButton>
-                                    </ThumbnailCard>
-                                  </div>
+              <Droppable droppableId="files-droppable" direction="horizontal">
+                {(provided) => (
+                  <Box ref={provided.innerRef} {...provided.droppableProps} sx={{ display: 'flex', overflowX: 'auto', p: 1 }}>
+                    {files.map((img, index) => (
+                      <Draggable key={img.id} draggableId={img.id} index={index}>
+                        {(provided) => (
+                          <Box
+                            ref={provided.innerRef}
+                            {...provided.draggableProps}
+                            {...provided.dragHandleProps}
+                            sx={{ position: 'relative', mr: 1 }}
+                          >
+                            <ThumbnailCard>
+                              <CardMedia
+                                component="img"
+                                height="100"
+                                image={img.url}
+                                alt={`Uploaded ${index}`}
+                              />
+                              <CardContent sx={{ p: 1 }}>
+                                {uploadProgress[img.id] !== undefined && (
+                                  <LinearProgress variant="determinate" value={uploadProgress[img.id]} />
                                 )}
-                              </Draggable>
-                            ))}
-                            {provided.placeholder}
+                              </CardContent>
+                            </ThumbnailCard>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDeleteImage(index)}
+                              sx={{ position: 'absolute', top: 0, right: 0 }}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
                           </Box>
-                        </GroupContainer>
-                      )}
-                    </Droppable>
-                  </Grid>
-                ))}
-              </Grid>
+                        )}
+                      </Draggable>
+                    ))}
+                    {provided.placeholder}
+                  </Box>
+                )}
+              </Droppable>
             </DragDropContext>
             <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-              <Button variant="text" onClick={addNewGroup}>
-                Add New Group
-              </Button>
-              <Button variant="outlined" onClick={handleConfirm}>
+              <Button variant="contained" onClick={handleConfirm}>
                 Confirm Groupings
               </Button>
               {loadingListings && <CircularProgress size={24} sx={{ ml: 2 }} />}
@@ -367,7 +297,7 @@ const ImageUploader = () => {
     </>
   );
 
-  return page === 'upload' ? renderUpload() : renderListings();
+  return page === "upload" ? renderUpload() : renderListings();
 };
 
 export default ImageUploader;
