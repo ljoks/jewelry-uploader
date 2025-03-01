@@ -1,9 +1,14 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
 import base64
-import cv2
+import cv2 as cv
 import numpy as np
-import json
 import os
 import requests
+
+app = Flask(__name__)
+CORS(app)
 
 # ---- Utility function (your marker detection and removal) ----
 def process_image_marker(base64_data_url):
@@ -57,23 +62,9 @@ def process_image_marker(base64_data_url):
 
     return marker_id, cleaned_data_url
 
-def handler(event, context):
-    """
-    Serverless function endpoint for /api/generateGroupingAndDescriptions.
-    
-    Expects a POST request with a JSON payload of the following format:
-      {
-         "images": [ "data:image/jpeg;base64,....", "data:image/jpeg;base64,....", ... ],
-         "model": "gpt-4o-mini",   // optional, default provided
-         "max_tokens": 300         // optional
-      }
-      
-    The function:
-      1. Processes each image to detect and remove ArUco markers.
-      2. Groups images by the detected marker ID.
-      3. For each group, calls the GPT‑4o API with a prompt that instructs it to generate a marketing-friendly description.
-      4. Returns an array of groups with their marker ID, generated description, and image indices.
-    """
+# ---- Flask route ----
+@app.route('/api/generateGroupingAndDescriptions', methods=['POST'])
+def generate_groupings_and_descriptions():
     data = request.json
     images = data.get("images", [])
     model = data.get("model", "gpt-4o-mini")
@@ -99,6 +90,10 @@ def handler(event, context):
             "image": img["cleaned_image"]
         })
 
+    print(groups)
+    return {"success": "200"}  
+
+    '''
     # Call GPT-4o for each group
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     if not OPENAI_API_KEY:
@@ -152,3 +147,6 @@ def handler(event, context):
         })
 
     return jsonify(group_results)
+'''
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)

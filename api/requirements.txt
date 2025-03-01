@@ -1,3 +1,6 @@
 opencv-contrib-python
 numpy
 requests
+flask
+flask-cors
+python-dotenv

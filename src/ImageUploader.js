@@ -145,7 +145,7 @@ const ImageUploader = () => {
       };
 
       // Call the API endpoint.
-      const response = await fetch('/api/generateGroupingAndDescriptions', {
+      const response = await fetch('http://localhost:5000/api/generateGroupingAndDescriptions', {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -156,13 +156,14 @@ const ImageUploader = () => {
       }
       const result = await response.json();
       // The API returns an array of groups, each with marker_id, description, and imageIndices.
-      setListings(result);
-      setPage("listings");
+      console.log(result);
+      // setListings(result);
+      // setPage("listings");
     } catch (error) {
       console.error("Error generating groups and descriptions:", error);
       alert("Error generating groupings and descriptions. Please try again.");
     } finally {
-      setLoadingListings(false);
+      // setLoadingListings(false);
     }
   };
 
