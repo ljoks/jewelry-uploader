@@ -14,9 +14,9 @@ CORS(app)
 def process_image_marker(base64_data_url):
     """
     Given a Base64 data URL of an image, detect an ArUco marker (using DICT_4X4_250),
-    remove it via inpainting, and return a tuple:
-      (marker_id, cleaned_data_url)
-    If no marker is detected, marker_id is None.
+    and if detected, crop out the marker from the image. Returns a tuple:
+      (marker_id, cropped_data_url)
+    If no marker is detected, returns (None, original_data_url).
     """
     # Remove data URL prefix if present.
     if base64_data_url.startswith("data:image"):
@@ -33,7 +33,7 @@ def process_image_marker(base64_data_url):
 
     gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
 
-    # Instantiate the ArucoDetector using the new API (using DICT_4X4_250).
+    # Instantiate the ArucoDetector using the new API.
     dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_250)
     parameters = cv.aruco.DetectorParameters()
     detector = cv.aruco.ArucoDetector(dictionary, parameters)
@@ -43,24 +43,36 @@ def process_image_marker(base64_data_url):
     marker_id = None
     if markerIds is not None and len(markerIds) > 0:
         marker_id = int(markerIds[0][0])  # Take the first detected marker's ID.
+        # Get the bounding box of the marker.
+        corners = markerCorners[0]  # shape: (1, 4, 2)
+        pts = corners.reshape((4, 2)).astype(np.int32)
+        x, y, w, h = cv.boundingRect(pts)
 
-        # Create a mask covering all detected marker regions.
-        marker_mask = np.zeros(gray.shape, dtype=np.uint8)
-        for corners in markerCorners:
-            pts = corners.reshape((4, 2)).astype(np.int32)
-            cv.fillConvexPoly(marker_mask, pts, 255)
+        # Assume marker is in the bottom-right. Crop out the marker region.
+        # For example, crop the image from the top-left up to (image_width - marker_width, image_height - marker_height).
+        img_height, img_width = image.shape[:2]
+        # Check if the marker is approximately in the bottom-right corner.
+        if x > img_width * 0.5 and y > img_height * 0.5:
+            new_width = x  # crop away the marker from the right side.
+            new_height = y  # crop away the marker from the bottom.
+            # Option 1: Crop the image entirely to the top-left region.
+            cropped_image = image[0:new_height, 0:new_width]
+            # Option 2: Alternatively, you might choose to crop only a small margin around the marker.
+            # Adjust this logic based on your needs.
+        else:
+            # If the marker isn't in the expected position, fall back to the original image.
+            cropped_image = image
+    else:
+        cropped_image = image
 
-        # Dilate the mask to ensure full marker coverage.
-        kernel = np.ones((5, 5), np.uint8)
-        marker_mask = cv.dilate(marker_mask, kernel, iterations=1)
-        # Inpaint the marker region.
-        image = cv.inpaint(image, marker_mask, inpaintRadius=3, flags=cv.INPAINT_TELEA)
-
-    retval, buffer = cv.imencode('.png', image)
+    # Encode the (cropped) image back to JPEG and then to Base64.
+    retval, buffer = cv.imencode('.jpg', cropped_image)
+    if not retval:
+        return marker_id, base64_data_url
     cleaned_base64 = base64.b64encode(buffer).decode('utf-8')
-    cleaned_data_url = "data:image/png;base64," + cleaned_base64
+    cropped_data_url = "data:image/jpeg;base64," + cleaned_base64
 
-    return marker_id, cleaned_data_url
+    return marker_id, cropped_data_url
 
 # ---- Flask route ----
 @app.route('/api/generateGroupingAndDescriptions', methods=['POST'])
