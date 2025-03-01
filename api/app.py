@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-
 import base64
 import cv2 as cv
 import numpy as np
@@ -10,13 +9,12 @@ import requests
 app = Flask(__name__)
 CORS(app)
 
-# ---- Utility function (your marker detection and removal) ----
 def process_image_marker(base64_data_url):
     """
-    Given a Base64 data URL of an image, detect an ArUco marker (using DICT_4X4_250),
-    and if detected, crop out the marker from the image. Returns a tuple:
-      (marker_id, cropped_data_url)
-    If no marker is detected, returns (None, original_data_url).
+    Given a Base64 data URL of an image, detect an ArUco marker (using DICT_4X4_250)
+    and crop the marker out of the image (assumes marker is in the bottom-right).
+    Returns a tuple: (marker_id, cropped_data_url).
+    If no marker is detected, marker_id will be None and the original image is returned.
     """
     # Remove data URL prefix if present.
     if base64_data_url.startswith("data:image"):
@@ -24,7 +22,7 @@ def process_image_marker(base64_data_url):
     else:
         base64_str = base64_data_url
 
-    # Decode Base64 to bytes, then to NumPy array and image.
+    # Decode Base64 into bytes, then into an OpenCV image.
     img_data = base64.b64decode(base64_str)
     np_arr = np.frombuffer(img_data, np.uint8)
     image = cv.imdecode(np_arr, cv.IMREAD_COLOR)
@@ -33,39 +31,29 @@ def process_image_marker(base64_data_url):
 
     gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
 
-    # Instantiate the ArucoDetector using the new API.
+    # Instantiate ArucoDetector using new API in OpenCV 4.7.x
     dictionary = cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_250)
     parameters = cv.aruco.DetectorParameters()
     detector = cv.aruco.ArucoDetector(dictionary, parameters)
-
-    markerCorners, markerIds, rejectedCandidates = detector.detectMarkers(gray)
+    markerCorners, markerIds, _ = detector.detectMarkers(gray)
 
     marker_id = None
     if markerIds is not None and len(markerIds) > 0:
-        marker_id = int(markerIds[0][0])  # Take the first detected marker's ID.
-        # Get the bounding box of the marker.
-        corners = markerCorners[0]  # shape: (1, 4, 2)
+        marker_id = int(markerIds[0][0])  # use first detected marker
+        # Get bounding box of the marker.
+        corners = markerCorners[0]  # first marker
         pts = corners.reshape((4, 2)).astype(np.int32)
         x, y, w, h = cv.boundingRect(pts)
-
-        # Assume marker is in the bottom-right. Crop out the marker region.
-        # For example, crop the image from the top-left up to (image_width - marker_width, image_height - marker_height).
         img_height, img_width = image.shape[:2]
-        # Check if the marker is approximately in the bottom-right corner.
+        # Assume marker is in the bottom-right: crop out marker by cropping
+        # to the area above and to the left of the marker.
         if x > img_width * 0.5 and y > img_height * 0.5:
-            new_width = x  # crop away the marker from the right side.
-            new_height = y  # crop away the marker from the bottom.
-            # Option 1: Crop the image entirely to the top-left region.
-            cropped_image = image[0:new_height, 0:new_width]
-            # Option 2: Alternatively, you might choose to crop only a small margin around the marker.
-            # Adjust this logic based on your needs.
+            cropped_image = image[0:y, 0:x]
         else:
-            # If the marker isn't in the expected position, fall back to the original image.
             cropped_image = image
     else:
         cropped_image = image
 
-    # Encode the (cropped) image back to JPEG and then to Base64.
     retval, buffer = cv.imencode('.jpg', cropped_image)
     if not retval:
         return marker_id, base64_data_url
@@ -74,71 +62,103 @@ def process_image_marker(base64_data_url):
 
     return marker_id, cropped_data_url
 
-# ---- Flask route ----
-@app.route('/api/generateGroupingAndDescriptions', methods=['POST'])
-def generate_groupings_and_descriptions():
+@app.route('/api/groupImages', methods=['POST'])
+def group_images():
+    """
+    Expects a JSON payload:
+      {
+         "images": [ "data:image/jpeg;base64,...", "data:image/jpeg;base64,...", ... ]
+      }
+    Processes each image (detect marker, crop out marker), then groups images by marker_id.
+    Returns an array of groups:
+      [
+         { "marker_id": "<id or 'unknown'>", "images": [ { "index": 0, "image": "<cleaned data URL>" }, ... ] },
+         ...
+      ]
+    """
     data = request.json
     images = data.get("images", [])
-    model = data.get("model", "gpt-4o-mini")
-    max_tokens = data.get("max_tokens", 300)
-
     processed_images = []
     for img_data_url in images:
-        marker_id, cleaned_data_url = process_image_marker(img_data_url)
+        marker_id, cleaned_image = process_image_marker(img_data_url)
         processed_images.append({
             "marker_id": marker_id,
-            "cleaned_image": cleaned_data_url
+            "cleaned_image": cleaned_image
         })
 
-    # Group by marker_id
+    # Group images by marker_id (use "unknown" if marker_id is None).
     groups = {}
     for idx, img in enumerate(processed_images):
         key = str(img["marker_id"]) if img["marker_id"] is not None else "unknown"
-        if key not in groups:
-            groups[key] = []
-        groups[key].append({
+        groups.setdefault(key, []).append({
             "index": idx,
-            "marker_id": img["marker_id"],
             "image": img["cleaned_image"]
         })
+    
+    # Format result as a list of groups.
+    result = []
+    for key, imgs in groups.items():
+        result.append({
+            "marker_id": key,
+            "images": imgs  # each with index and cleaned image
+        })
+    return jsonify(result)
 
-    print(groups)
-    return {"success": "200"}  
+@app.route('/api/generateDescriptions', methods=['POST'])
+def generate_descriptions():
+    """
+    Expects a JSON payload:
+      {
+         "groupings": [ { "marker_id": "<id>", "imageIndices": [0, 2, 5] }, ... ],
+         "allImages": [ "data:image/jpeg;base64,...", "data:image/jpeg;base64,...", ... ],
+         "model": "gpt-4o-mini",   // optional
+         "max_tokens": 300         // optional
+      }
+    For each group, builds a prompt using the images (referenced by their indices from allImages)
+    and calls the OpenAI API to generate a detailed description.
+    Returns an array of objects:
+      [
+         { "marker_id": "<id>", "description": "...", "imageIndices": [0,2,5] },
+         ...
+      ]
+    """
+    data = request.json
+    groupings = data.get("groupings", [])
+    all_images = data.get("allImages", [])
+    model = data.get("model", "gpt-4o-mini")
+    max_tokens = data.get("max_tokens", 300)
 
-    '''
-    # Call GPT-4o for each group
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
     if not OPENAI_API_KEY:
         return jsonify({"error": "Missing OPENAI_API_KEY"}), 500
 
     group_results = []
-    for marker_id, images_group in groups.items():
+    for group in groupings:
+        imageIndices = group.get("imageIndices", [])
         messages = [
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": "You are an expert jewelry marketer. Based on the following images (each cleaned to remove markers), generate a detailed, marketing-friendly description for this jewelry item."
+                        "text": "You are an expert jewelry marketer. Based on the following images of a single jewelry item, generate a concise, marketing-friendly description for the item. Do not use markdown, just plain text."
                     }
                 ] + [
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": img["image"],
-                            "detail": "high"
+                            "url": all_images[i],
+                            "detail": "low"
                         }
-                    } for img in images_group
+                    } for i in imageIndices if i < len(all_images)
                 ]
             }
         ]
-
         openai_payload = {
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens
         }
-
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={
@@ -147,18 +167,15 @@ def generate_groupings_and_descriptions():
             },
             json=openai_payload
         )
-
         if response.status_code != 200:
             return jsonify({"error": response.text}), response.status_code
-
         description = response.json()["choices"][0]["message"]["content"]
         group_results.append({
-            "marker_id": marker_id,
+            "marker_id": group.get("marker_id", "unknown"),
             "description": description,
-            "imageIndices": [img["index"] for img in images_group]
+            "imageIndices": imageIndices
         })
-
     return jsonify(group_results)
-'''
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
